@@ -75,4 +75,7 @@ venv.bak/
 
 # ignore data directory contents
 data/*
+!data/llm_auto_labeller.py
+!data/eda_features.py
+!data/class_weights
 !data/.gitkeep
