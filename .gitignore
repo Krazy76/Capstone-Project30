@@ -78,4 +78,7 @@ data/*
 !data/llm_auto_labeller.py
 !data/eda_features.py
 !data/class_weights
+!data/silver_dataset_master.csv
+!data/silver_dataset_master.db
+!data/silver_dataset_master_with_text.csv
 !data/.gitkeep
