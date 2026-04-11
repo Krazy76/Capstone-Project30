@@ -1,0 +1,76 @@
+{
+  "n_total_rows_raw": 9881,
+  "n_useful_rows": 9218,
+  "n_dropped_all_empty": 150,
+  "macro_order": [
+    "Output and Income",
+    "Labor Market",
+    "Housing",
+    "Consumption, Orders, and Inventories",
+    "Money and Credit",
+    "Interest and Exchange Rates",
+    "Prices",
+    "Stock Market"
+  ],
+  "macro_counts": {
+    "Output and Income": 121,
+    "Labor Market": 95,
+    "Housing": 22,
+    "Consumption, Orders, and Inventories": 4,
+    "Money and Credit": 183,
+    "Interest and Exchange Rates": 253,
+    "Prices": 145,
+    "Stock Market": 1648
+  },
+  "macro_pos_weight": [
+    75.18181610107422,
+    96.03157806396484,
+    418.0,
+    2303.5,
+    49.371585845947266,
+    35.434783935546875,
+    62.57241439819336,
+    4.593446731567383
+  ],
+  "industry_order": [
+    "Energy",
+    "Materials",
+    "Industrials",
+    "Consumer Discretionary",
+    "Consumer Staples",
+    "Health Care",
+    "Financials",
+    "Information Technology",
+    "Communication Services",
+    "Utilities",
+    "Real Estate"
+  ],
+  "industry_counts": {
+    "Energy": 931,
+    "Materials": 742,
+    "Industrials": 646,
+    "Consumer Discretionary": 921,
+    "Consumer Staples": 340,
+    "Health Care": 734,
+    "Financials": 2525,
+    "Information Technology": 1273,
+    "Communication Services": 116,
+    "Utilities": 216,
+    "Real Estate": 296
+  },
+  "industry_pos_weight": [
+    8.9011812210083,
+    11.42318058013916,
+    13.269350051879883,
+    9.008686065673828,
+    26.111764907836914,
+    11.55858325958252,
+    2.65069317817688,
+    6.2411627769470215,
+    78.46551513671875,
+    41.675926208496094,
+    30.141891479492188
+  ],
+  "unknown_macro_labels": {},
+  "unknown_industry_labels": {}
+}
