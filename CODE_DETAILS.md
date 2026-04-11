@@ -435,8 +435,9 @@ transformers
 peft
 pandas
 tqdm
+scikit-learn
 ```
-(And `scikit-learn` + `seqeval` will be added at Step 6 for metrics.)
+(And `seqeval` will be added at Step 6 for metrics.)
 
 ---
 
