@@ -73,12 +73,18 @@ venv.bak/
 # Logs
 *.log
 
-# ignore data directory contents
+# ignore data directory contents (track only code + small JSON metadata)
 data/*
 !data/llm_auto_labeller.py
 !data/eda_features.py
 !data/class_weights
-!data/silver_dataset_master.csv
-!data/silver_dataset_master.db
-!data/silver_dataset_master_with_text.csv
+!data/class_weights/*.json
 !data/.gitkeep
+# Large/sensitive data files: track locally, never commit.
+# CSV / DB masters can be 100+ MB and contain article text.
+# Class-weight .pt tensors are reproducible from src.data_prep.class_weights.
+data/class_weights/*.pt
+data/*.csv
+data/*.db
+data/*.relabel_ckpt
+data/active_learning/
