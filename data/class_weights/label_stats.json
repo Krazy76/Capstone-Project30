@@ -1,7 +1,6 @@
 {
   "n_total_rows_raw": 9881,
   "n_useful_rows": 9218,
-  "n_dropped_all_empty": 150,
   "macro_order": [
     "Output and Income",
     "Labor Market",
