@@ -71,12 +71,15 @@ def save_relabelled_ids(path: Path, ids: set[int]):
     path.write_text(json.dumps(sorted(ids)))
 
 
-def _filtered_to_master_index(master_csv: Path) -> list[int]:
+def _filtered_to_master_index(
+    master_csv: Path,
+    label_version: str | None = "v2",
+) -> list[int]:
     """Map filtered-row index -> raw csv row index.
 
-    The filter rule (is_financial==True AND not all-empty) is applied
-    inside load_and_filter_master with reset_index. To write back to the
-    raw csv we need the original row positions of the kept rows.
+    Mirrors the rule inside load_and_filter_master (is_financial=True AND
+    not all-empty AND label_version match) so this index map stays aligned
+    with the training-corpus row order.
     """
     raw = pd.read_csv(master_csv, low_memory=False)
 
@@ -87,12 +90,18 @@ def _filtered_to_master_index(master_csv: Path) -> list[int]:
             return False
         return str(x).strip().lower() in {"true", "1", "yes"}
 
+    # Apply label_version filter first (mirrors load_and_filter_master).
+    if label_version is not None and "label_version" in raw.columns:
+        version_mask = raw["label_version"] == label_version
+    else:
+        version_mask = pd.Series([True] * len(raw))
+
     mask_fin = raw["is_financial"].apply(_is_fin)
     macro_l = raw["macro"].apply(parse_list_cell)
     industry_l = raw["industry"].apply(parse_list_cell)
     entity_l = raw["entity"].apply(parse_list_cell)
     not_empty = (macro_l.map(len) > 0) | (industry_l.map(len) > 0) | (entity_l.map(len) > 0)
-    keep_mask = mask_fin & not_empty
+    keep_mask = version_mask & mask_fin & not_empty
     return raw.index[keep_mask].tolist()
 
 

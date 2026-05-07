@@ -584,6 +584,25 @@ def relabel_master(
     max_rows: stop after this many rows have been processed (for staged runs).
     """
     import time as _time
+    import os as _os
+
+    def _atomic_to_csv(frame, target: Path, retries: int = 5):
+        """Write CSV atomically: write to .tmp, fsync, then os.replace.
+
+        Avoids partial-write corruption AND retries transient Windows
+        IO errors (file briefly locked by AV / OneDrive / explorer preview).
+        """
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        last_err = None
+        for attempt in range(1, retries + 1):
+            try:
+                frame.to_csv(tmp, index=False)
+                _os.replace(tmp, target)
+                return
+            except OSError as e:
+                last_err = e
+                _time.sleep(2 ** attempt)  # 2,4,8,16,32s
+        raise RuntimeError(f"atomic write failed after {retries} retries: {last_err}")
 
     if checkpoint is None:
         checkpoint = path.with_suffix(".relabel_ckpt")
@@ -633,13 +652,13 @@ def relabel_master(
             macro_hits += 1
         pbar.set_postfix(macro=macro_hits, v2=int(df["label_version"].eq(LABEL_VERSION).sum()), row=i)
 
-        # Flush every 100 rows.
-        if (i + 1) % 100 == 0:
-            df.to_csv(path, index=False)
+        # Flush every 500 rows (175MB CSV; smaller intervals waste IO).
+        if (i + 1) % 500 == 0:
+            _atomic_to_csv(df, path)
             checkpoint.write_text(str(i))
 
     # Final write.
-    df.to_csv(path, index=False)
+    _atomic_to_csv(df, path)
     checkpoint.unlink(missing_ok=True)
     elapsed = _time.time() - t0
     v2_total = int(df["label_version"].eq(LABEL_VERSION).sum())
