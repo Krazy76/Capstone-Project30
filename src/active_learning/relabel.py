@@ -32,21 +32,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from pathlib import Path
 
 import pandas as pd
 
-# Reuse the production labeller verbatim (single source of truth for prompt + temp).
-BASE = Path(r"E:\Coding\Python\Capstone-Project30")
-sys.path.insert(0, str(BASE / "data"))
-from llm_auto_labeller import call_ollama, validate  # noqa: E402
-
+from data.llm_auto_labeller import call_ollama, validate
 from src.data_prep.filters import load_and_filter_master, parse_list_cell
 
-DEFAULT_MASTER = BASE / "data" / "silver_dataset_master_with_text.csv"
-DEFAULT_AL_ROOT = BASE / "data" / "active_learning"
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_MASTER = _PROJECT_ROOT / "data" / "silver_dataset_master_with_text.csv"
+DEFAULT_AL_ROOT = _PROJECT_ROOT / "data" / "active_learning"
 RELABELLED_IDS_PATH = DEFAULT_AL_ROOT / "relabelled_ids.json"
 
 

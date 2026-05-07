@@ -7,16 +7,13 @@ from __future__ import annotations
 
 import ast
 import json
-import sys
 from pathlib import Path
 
 import pandas as pd
 
 # Import canonical label orders directly from the labeller so there is
 # exactly one place they are defined.
-BASE = Path(r"E:\Coding\Python\Capstone-Project30")
-sys.path.insert(0, str(BASE / "data"))
-from llm_auto_labeller import MACRO_RULES, INDUSTRY_RULES  # noqa: E402
+from data.llm_auto_labeller import MACRO_RULES, INDUSTRY_RULES
 
 MACRO_LABELS: list[str] = list(MACRO_RULES.keys())            # FRED-MD 8
 INDUSTRY_LABELS: list[str] = list(INDUSTRY_RULES.keys())      # GICS 11
