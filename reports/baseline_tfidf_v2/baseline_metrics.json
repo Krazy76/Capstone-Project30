@@ -1,0 +1,45 @@
+{
+  "binary": {
+    "micro_f1": 0.9311036789297659,
+    "macro_f1": 0.9265088196926595,
+    "weighted_f1": 0.9304438724763371
+  },
+  "per_class": {
+    "macro": {
+      "micro_f1": 0.796221322537112,
+      "macro_f1": 0.646800375776089,
+      "weighted_f1": 0.8064443716830644,
+      "per_class_f1": {
+        "Output and Income": 0.7151515151515152,
+        "Labor Market": 0.5526315789473685,
+        "Housing": 0.5263157894736842,
+        "Consumption, Orders, and Inventories": 0.4528301886792453,
+        "Money and Credit": 0.4788732394366197,
+        "Interest and Exchange Rates": 0.7828571428571428,
+        "Prices": 0.7880184331797235,
+        "Stock Market": 0.8777251184834123
+      }
+    },
+    "industry": {
+      "micro_f1": 0.7051416579223505,
+      "macro_f1": 0.6411153842435229,
+      "weighted_f1": 0.7135873368724612,
+      "per_class_f1": {
+        "Energy": 0.6666666666666666,
+        "Materials": 0.6618705035971223,
+        "Industrials": 0.5405405405405406,
+        "Consumer Discretionary": 0.6037735849056604,
+        "Consumer Staples": 0.48936170212765956,
+        "Health Care": 0.8268156424581006,
+        "Financials": 0.7908496732026143,
+        "Information Technology": 0.7435897435897436,
+        "Communication Services": 0.5555555555555556,
+        "Utilities": 0.5416666666666666,
+        "Real Estate": 0.631578947368421
+      }
+    }
+  },
+  "n_train": 16673,
+  "n_test": 922,
+  "csv_path": "data\\active_learning\\round_2\\master_with_text_post.csv"
+}

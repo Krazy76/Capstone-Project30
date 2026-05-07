@@ -1,0 +1,38 @@
+{
+  "cuda_bs1": {
+    "device": "cuda",
+    "batch_size": 1,
+    "n_passes": 50,
+    "total_articles": 50,
+    "wall_seconds": 0.6376596999907633,
+    "ms_per_article": 12.753193999815267,
+    "ms_per_batch": 12.753193999815267
+  },
+  "cuda_bs16": {
+    "device": "cuda",
+    "batch_size": 16,
+    "n_passes": 50,
+    "total_articles": 800,
+    "wall_seconds": 6.078204999997979,
+    "ms_per_article": 7.597756249997474,
+    "ms_per_batch": 121.56409999995958
+  },
+  "cpu_bs1": {
+    "device": "cpu",
+    "batch_size": 1,
+    "n_passes": 50,
+    "total_articles": 50,
+    "wall_seconds": 9.639094800004386,
+    "ms_per_article": 192.78189600008773,
+    "ms_per_batch": 192.78189600008773
+  },
+  "cpu_bs16": {
+    "device": "cpu",
+    "batch_size": 16,
+    "n_passes": 50,
+    "total_articles": 800,
+    "wall_seconds": 140.6046975000063,
+    "ms_per_article": 175.75587187500787,
+    "ms_per_batch": 2812.093950000126
+  }
+}

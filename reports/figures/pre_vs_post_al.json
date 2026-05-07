@@ -1,0 +1,22 @@
+{
+  "pre_AL_run": "roberta-base_20260505_124448",
+  "post_AL_run": "roberta-base_20260505_145132",
+  "pre_AL": {
+    "val_macro_f1_micro": 0.638667643070221,
+    "val_industry_f1_micro": 0.5162264108657837,
+    "val_entity_f1_micro": 0.5911481380462646,
+    "val_combined_f1": 0.5820140639940897
+  },
+  "post_AL": {
+    "val_macro_f1_micro": 0.6401734352111816,
+    "val_industry_f1_micro": 0.5165912508964539,
+    "val_entity_f1_micro": 0.5953893661499023,
+    "val_combined_f1": 0.5840513507525126
+  },
+  "delta": {
+    "val_macro_f1_micro": 0.0015057921409606934,
+    "val_industry_f1_micro": 0.000364840030670166,
+    "val_entity_f1_micro": 0.004241228103637695,
+    "val_combined_f1": 0.0020372867584228516
+  }
+}
