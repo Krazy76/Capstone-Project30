@@ -35,9 +35,9 @@ from src.active_learning.relabel import relabel
 from src.active_learning.score import score_pool
 from src.training.train import TrainConfig, train
 
-BASE = Path(r"E:\Coding\Python\Capstone-Project30")
-DEFAULT_AL_ROOT = BASE / "data" / "active_learning"
-DEFAULT_MASTER = BASE / "data" / "silver_dataset_master_with_text.csv"
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_AL_ROOT = _PROJECT_ROOT / "data" / "active_learning"
+DEFAULT_MASTER = _PROJECT_ROOT / "data" / "silver_dataset_master_with_text.csv"
 
 
 @dataclass
@@ -79,9 +79,9 @@ def _recompute_class_weights(round_dir: Path):
     subprocess.run(
         [sys.executable, "-m", "src.data_prep.class_weights"],
         check=True,
-        cwd=str(BASE),
+        cwd=str(_PROJECT_ROOT),
     )
-    src = BASE / "data" / "class_weights"
+    src = _PROJECT_ROOT / "data" / "class_weights"
     dst = round_dir / "class_weights"
     dst.mkdir(parents=True, exist_ok=True)
     for name in ("macro_pos_weight.pt", "industry_pos_weight.pt", "label_stats.json"):

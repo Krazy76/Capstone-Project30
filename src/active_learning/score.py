@@ -34,10 +34,9 @@ from src.model.architecture import TriLevelFinancialModel
 from src.model.lora_wrap import wrap_with_lora
 from src.training.splits import load_or_create_splits
 
-DEFAULT_MASTER = Path(
-    r"E:\Coding\Python\Capstone-Project30\data\silver_dataset_master_with_text.csv"
-)
-DEFAULT_AL_ROOT = Path(r"E:\Coding\Python\Capstone-Project30\data\active_learning")
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_MASTER = _PROJECT_ROOT / "data" / "silver_dataset_master_with_text.csv"
+DEFAULT_AL_ROOT = _PROJECT_ROOT / "data" / "active_learning"
 
 
 def _binary_entropy(p: torch.Tensor) -> torch.Tensor:

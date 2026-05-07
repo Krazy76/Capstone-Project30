@@ -19,7 +19,8 @@ import torch
 import torch.nn as nn
 
 POS_WEIGHT_CAP = 100.0
-DEFAULT_WEIGHTS_DIR = Path(r"E:\Coding\Python\Capstone-Project30\data\class_weights")
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_WEIGHTS_DIR = _PROJECT_ROOT / "data" / "class_weights"
 
 
 class TriLevelLoss(nn.Module):
