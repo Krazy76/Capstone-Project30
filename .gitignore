@@ -89,3 +89,7 @@ data/*.csv
 data/*.db
 data/*.relabel_ckpt
 data/active_learning/
+
+# Heavy run outputs: keep local. Reports (figures, doc) ARE tracked.
+artifacts/
+logs/

@@ -439,8 +439,9 @@ peft
 pandas
 numpy
 tqdm
+scikit-learn
 ```
-(And `seqeval` will be added later if span-level entity F1 is needed; token-level F1 is in-tree.)
+(And `seqeval` is required for span-level NER F1; see `src/eval/span_f1.py`.)
 
 ---
 

@@ -1,0 +1,70 @@
+=== Project 30 baseline: TF-IDF + Logistic Regression ===
+Input file: data\active_learning\round_2\master_with_text_post.csv
+Rows used after filtering: 18517
+
+Label distribution (full filtered dataset):
+macro_binary       15491
+industry_binary    13075
+entity_binary      17798
+dtype: int64
+
+--- MACRO ---
+              precision    recall  f1-score   support
+
+           0     0.5815    0.8106    0.6772       132
+           1     0.9661    0.9025    0.9332       790
+
+    accuracy                         0.8894       922
+   macro avg     0.7738    0.8566    0.8052       922
+weighted avg     0.9111    0.8894    0.8966       922
+
+--- INDUSTRY ---
+              precision    recall  f1-score   support
+
+           0     0.6497    0.9091    0.7578       253
+           1     0.9595    0.8146    0.8812       669
+
+    accuracy                         0.8406       922
+   macro avg     0.8046    0.8619    0.8195       922
+weighted avg     0.8745    0.8406    0.8473       922
+
+--- ENTITY ---
+              precision    recall  f1-score   support
+
+           0     0.3596    0.9143    0.5161        35
+           1     0.9964    0.9357    0.9651       887
+
+    accuracy                         0.9349       922
+   macro avg     0.6780    0.9250    0.7406       922
+weighted avg     0.9722    0.9349    0.9481       922
+
+Overall binary multilabel F1 scores:
+micro_f1=0.9311
+macro_f1=0.9265
+weighted_f1=0.9304
+
+
+=== MACRO per-class F1 (test set) ===
+micro_f1=0.7962  macro_f1=0.6468  weighted_f1=0.8064
+  Output and Income                        0.7152
+  Labor Market                             0.5526
+  Housing                                  0.5263
+  Consumption, Orders, and Inventories     0.4528
+  Money and Credit                         0.4789
+  Interest and Exchange Rates              0.7829
+  Prices                                   0.7880
+  Stock Market                             0.8777
+
+=== INDUSTRY per-class F1 (test set) ===
+micro_f1=0.7051  macro_f1=0.6411  weighted_f1=0.7136
+  Energy                                   0.6667
+  Materials                                0.6619
+  Industrials                              0.5405
+  Consumer Discretionary                   0.6038
+  Consumer Staples                         0.4894
+  Health Care                              0.8268
+  Financials                               0.7908
+  Information Technology                   0.7436
+  Communication Services                   0.5556
+  Utilities                                0.5417
+  Real Estate                              0.6316
