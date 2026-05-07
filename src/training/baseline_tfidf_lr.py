@@ -59,28 +59,19 @@ def clean_text(text: str) -> str:
 
 def load_baseline_dataframe(csv_path: Path) -> pd.DataFrame:
     """
-    Load the repo's master-with-text CSV and apply the same baseline filtering idea:
-    - keep only is_financial == True
-    - parse macro / industry / entity into lists
-    - drop rows where all three are empty
+    Load the master CSV using the SAME filter the transformer pipeline uses
+    (load_and_filter_master with default label_version='v2'). Otherwise the
+    baseline's row count diverges from the transformer's, and the locked
+    splits file points to wrong rows.
     """
-    df = pd.read_csv(csv_path, low_memory=False)
+    import sys
+    sys.path.insert(0, str(project_root()))
+    from src.data_prep.filters import load_and_filter_master
 
-    # Keep only financial rows
-    df = df[df["is_financial"].apply(is_financial_true)].copy()
-
-    # Parse label columns
-    df["macro_list"] = df["macro"].apply(parse_list_cell)
-    df["industry_list"] = df["industry"].apply(parse_list_cell)
-    df["entity_list"] = df["entity"].apply(parse_list_cell)
-
-    # Drop rows where all three label groups are empty
-    all_empty = (
-        df["macro_list"].map(len).eq(0)
-        & df["industry_list"].map(len).eq(0)
-        & df["entity_list"].map(len).eq(0)
-    )
-    df = df[~all_empty].copy()
+    # Same filter as transformer: is_financial=True AND not all-empty AND
+    # label_version=='v2'. Returns df with macro_list/industry_list/entity_list
+    # already parsed and reset_index applied.
+    df = load_and_filter_master(csv_path).copy()
 
     # Build text field using: title + text
     if "title" not in df.columns:
@@ -105,28 +96,77 @@ def load_baseline_dataframe(csv_path: Path) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+def _build_per_class_targets(df: pd.DataFrame):
+    """Per-class multi-label targets matching the transformer pipeline.
+
+    Returns:
+        macro_y: (n, 8) one-hot for FRED-MD macro labels
+        industry_y: (n, 11) one-hot for GICS industry labels
+        macro_labels, industry_labels: column orderings
+    """
+    import sys, numpy as np
+    sys.path.insert(0, str(project_root()))
+    from src.data_prep.filters import MACRO_LABELS, INDUSTRY_LABELS
+
+    n = len(df)
+    macro_y = np.zeros((n, len(MACRO_LABELS)), dtype=int)
+    industry_y = np.zeros((n, len(INDUSTRY_LABELS)), dtype=int)
+    macro_to_idx = {lbl: i for i, lbl in enumerate(MACRO_LABELS)}
+    industry_to_idx = {lbl: i for i, lbl in enumerate(INDUSTRY_LABELS)}
+
+    for i, (mlist, ilist) in enumerate(zip(df["macro_list"], df["industry_list"])):
+        for m in mlist:
+            if m in macro_to_idx:
+                macro_y[i, macro_to_idx[m]] = 1
+        for ind in ilist:
+            if ind in industry_to_idx:
+                industry_y[i, industry_to_idx[ind]] = 1
+    return macro_y, industry_y, MACRO_LABELS, INDUSTRY_LABELS
+
+
 def main():
+    import argparse
     root = project_root()
-    csv_path = root / "data" / "silver_dataset_master_with_text.csv"
-    output_dir = root / "reports" / "baseline_tfidf_lr"
+    p = argparse.ArgumentParser()
+    p.add_argument("--master-csv", default=str(root / "data" / "silver_dataset_master_with_text.csv"))
+    p.add_argument("--out-name", default="baseline_tfidf_lr",
+                   help="Subdir name under reports/ for outputs")
+    p.add_argument("--use-splits", action="store_true", default=True,
+                   help="Use the locked splits from data/splits/ to match transformer pipeline")
+    p.add_argument("--no-splits", dest="use_splits", action="store_false")
+    args = p.parse_args()
+
+    csv_path = Path(args.master_csv)
+    output_dir = root / "reports" / args.out_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if not csv_path.exists():
-        raise FileNotFoundError(
-            f"Could not find {csv_path}. Make sure silver_dataset_master_with_text.csv exists first."
-        )
+        raise FileNotFoundError(f"Could not find {csv_path}.")
 
     df = load_baseline_dataframe(csv_path)
 
     X = df["model_text"]
     y = df[["macro_binary", "industry_binary", "entity_binary"]]
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=0.2,
-        random_state=42,
-    )
+    # ---- Split strategy ----
+    if args.use_splits:
+        # Use the same train/val/test indices as the transformer pipeline so
+        # numbers compare apples-to-apples in section 4.4.3.
+        import sys, json
+        sys.path.insert(0, str(root))
+        from src.training.splits import load_or_create_splits
+        splits = load_or_create_splits(n_rows=len(df))
+        train_idx = splits["train"]
+        test_idx = splits["test"]    # Use TEST split (matches transformer eval)
+        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+        y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+        print(f"[baseline] using locked splits: train={len(train_idx)} test={len(test_idx)}")
+    else:
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42,
+        )
+        train_idx = X_train.index.tolist()
+        test_idx = X_test.index.tolist()
 
     pipeline = Pipeline(
         [
@@ -182,10 +222,71 @@ def main():
     macro_f1 = f1_score(y_test, y_pred, average="macro", zero_division=0)
     weighted_f1 = f1_score(y_test, y_pred, average="weighted", zero_division=0)
 
-    report_lines.append("Overall multilabel F1 scores:\n")
+    report_lines.append("Overall binary multilabel F1 scores:\n")
     report_lines.append(f"micro_f1={micro_f1:.4f}\n")
     report_lines.append(f"macro_f1={macro_f1:.4f}\n")
-    report_lines.append(f"weighted_f1={weighted_f1:.4f}\n")
+    report_lines.append(f"weighted_f1={weighted_f1:.4f}\n\n")
+
+    # -----------------------------------------------------------------------
+    # Per-class multi-label baseline (matches transformer head structure).
+    # 8 macro classes + 11 industry classes -> directly comparable F1 numbers
+    # for section 4.4.3 Model Comparison.
+    # -----------------------------------------------------------------------
+    print("\n=== Per-class multi-label baseline (matches transformer heads) ===")
+    macro_y, industry_y, macro_labels, industry_labels = _build_per_class_targets(df)
+    macro_y_train, macro_y_test = macro_y[train_idx], macro_y[test_idx]
+    industry_y_train, industry_y_test = industry_y[train_idx], industry_y[test_idx]
+
+    perclass_metrics = {}
+
+    for head_name, y_tr, y_te, label_names in [
+        ("macro", macro_y_train, macro_y_test, macro_labels),
+        ("industry", industry_y_train, industry_y_test, industry_labels),
+    ]:
+        clf_perclass = Pipeline(
+            [
+                ("tfidf", TfidfVectorizer(
+                    max_features=20000, ngram_range=(1, 2),
+                    min_df=2, max_df=0.95, sublinear_tf=True,
+                )),
+                ("clf", OneVsRestClassifier(
+                    LogisticRegression(max_iter=2000, class_weight="balanced"),
+                )),
+            ]
+        )
+        clf_perclass.fit(X_train, y_tr)
+        y_pred_pc = clf_perclass.predict(X_test)
+
+        micro = f1_score(y_te, y_pred_pc, average="micro", zero_division=0)
+        macro_avg = f1_score(y_te, y_pred_pc, average="macro", zero_division=0)
+        weighted = f1_score(y_te, y_pred_pc, average="weighted", zero_division=0)
+        per_cls = f1_score(y_te, y_pred_pc, average=None, zero_division=0)
+
+        perclass_metrics[head_name] = {
+            "micro_f1": float(micro),
+            "macro_f1": float(macro_avg),
+            "weighted_f1": float(weighted),
+            "per_class_f1": {lbl: float(f) for lbl, f in zip(label_names, per_cls)},
+        }
+
+        report_lines.append(f"\n=== {head_name.upper()} per-class F1 (test set) ===\n")
+        report_lines.append(f"micro_f1={micro:.4f}  macro_f1={macro_avg:.4f}  weighted_f1={weighted:.4f}\n")
+        for lbl, f in zip(label_names, per_cls):
+            report_lines.append(f"  {lbl:<40} {f:.4f}\n")
+        print(f"  {head_name}: micro_f1={micro:.4f}  macro_f1={macro_avg:.4f}")
+
+    # JSON dump for the report table.
+    metrics_path = output_dir / "baseline_metrics.json"
+    metrics_path.write_text(
+        json.dumps({
+            "binary": {"micro_f1": micro_f1, "macro_f1": macro_f1, "weighted_f1": weighted_f1},
+            "per_class": perclass_metrics,
+            "n_train": len(X_train),
+            "n_test": len(X_test),
+            "csv_path": str(csv_path),
+        }, indent=2),
+        encoding="utf-8",
+    )
 
     report_path = output_dir / "baseline_report.txt"
     report_path.write_text("".join(report_lines), encoding="utf-8")
