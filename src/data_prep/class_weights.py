@@ -17,7 +17,7 @@ import torch
 from src.data_prep.filters import INDUSTRY_LABELS, MACRO_LABELS, load_and_filter_master
 
 BASE = Path(r"E:\Coding\Python\Capstone-Project30")
-MASTER_CSV = BASE / "data" / "silver_dataset_master.csv"
+MASTER_CSV = BASE / "data" / "silver_dataset_master_with_text.csv"
 OUT_DIR = BASE / "data" / "class_weights"
 
 

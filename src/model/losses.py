@@ -28,7 +28,7 @@ class TriLevelLoss(nn.Module):
         weights_dir: str | Path = DEFAULT_WEIGHTS_DIR,
         alpha_macro: float = 1.0,
         alpha_industry: float = 1.0,
-        alpha_entity: float = 1.0,
+        alpha_entity: float = 3.0,
         pos_weight_cap: float = POS_WEIGHT_CAP,
         ignore_index: int = -100,
     ):

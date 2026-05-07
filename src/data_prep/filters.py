@@ -62,14 +62,31 @@ def is_financial_true(x) -> bool:
     return str(x).strip().lower() in {"true", "1", "yes"}
 
 
-def load_and_filter_master(csv_path: Path) -> pd.DataFrame:
+def load_and_filter_master(
+    csv_path: Path,
+    label_version: str | None = "v2",
+) -> pd.DataFrame:
     """Load silver_dataset_master*.csv and apply the locked filter rule.
 
-    Keeps rows where is_financial == True AND at least one of
-    (macro, industry, entity) is non-empty. Adds parsed list columns:
-    macro_list, industry_list, entity_list.
+    Keeps rows where:
+      - is_financial == True
+      - at least one of (macro, industry, entity) is non-empty
+      - label_version == label_version arg (default "v2")
+
+    Pass label_version=None to include all rows regardless of version
+    (e.g. for backwards-compatible runs or when the column doesn't exist).
+
+    Adds parsed list columns: macro_list, industry_list, entity_list.
     """
     df = pd.read_csv(csv_path, low_memory=False)
+
+    # Filter by label version when the column exists and a version is requested.
+    if label_version is not None and "label_version" in df.columns:
+        df = df[df["label_version"] == label_version].reset_index(drop=True)
+    elif label_version is not None and "label_version" not in df.columns:
+        # Column absent means this is a legacy file (pre-versioning) -- keep all.
+        pass
+
     df = df[df["is_financial"].apply(is_financial_true)].reset_index(drop=True)
 
     df["macro_list"] = df["macro"].apply(parse_list_cell)

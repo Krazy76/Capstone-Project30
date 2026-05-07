@@ -427,6 +427,9 @@ Losses are similar to the bare test (not identical, because the batch is differe
 | `src/model/lora_wrap.py` | `wrap_with_lora` | imported |
 | `src/tests/smoke_test.py` | Step 4 verification | `python -m src.tests.smoke_test` |
 | `src/tests/smoke_test_lora.py` | Step 5 verification | `python -m src.tests.smoke_test_lora` |
+| `src/training/metrics.py` | Per-head F1 helpers | imported |
+| `src/training/splits.py` | Frozen train/val/test split | imported |
+| `src/training/train.py` | Step 6 training loop | `python -m src.training.train ...` |
 
 ### Required Python packages
 ```
@@ -434,22 +437,240 @@ torch
 transformers
 peft
 pandas
+numpy
 tqdm
 scikit-learn
 ```
-(And `seqeval` will be added at Step 6 for metrics.)
+(And `seqeval` is required for span-level NER F1; see `src/eval/span_f1.py`.)
 
 ---
 
-## 10. What's next (Step 6 onwards — not required for A2)
+## 10. Step 6 — Training loop
+
+Three files. Read in this order.
+
+### 10.1 `src/training/splits.py` — frozen data split
+- `make_splits(n_rows, val_frac=0.10, test_frac=0.10, seed=42)` shuffles row indices once and returns `{train, val, test, seed, n_rows}`.
+- `load_or_create_splits(...)` writes `data/splits/trilevel_splits.json` on first call and reuses it forever after.
+- **Append-only behaviour**: when AL adds rows to the master csv, the saved file is updated by appending the new tail-indices to `train` only. `val` and `test` are never touched. This is the contract that lets us keep an honest evaluation set across rounds.
+- Index space is positions in the **filtered** dataframe (`load_and_filter_master`), not raw csv rows.
+
+Verified output on current corpus: `train=7,374`, `val=922`, `test=922`, `n_rows=9,218`, seed `42`.
+
+### 10.2 `src/training/metrics.py` — per-head F1
+- `multilabel_metrics(logits, targets, threshold=0.5)` for the macro and industry heads. Sigmoid → threshold → per-class P/R/F1, then micro and macro averages, plus full per-class F1 list (used in the report's per-class breakdown).
+- `token_entity_metrics(logits, targets, o_index=0)` for the entity head. Argmax over tag dim, drop `-100`, then compute F1 over the union of "ground truth is non-O" and "prediction is non-O" tokens. This excludes the O-class avalanche so the score reflects actual entity discovery, not background majority class.
+- Span-level (seqeval) F1 is intentionally deferred: token-F1 is enough for in-loop monitoring and early stopping, span-F1 is a §6 evaluation deliverable.
+
+### 10.3 `src/training/train.py` — main loop
+Single-file orchestrator. CLI flags map 1:1 onto `TrainConfig` so configs are reproducible from `config.json` saved alongside the checkpoint.
+
+Pipeline per run:
+1. `AutoTokenizer.from_pretrained(backbone)` + `TriLevelDataset(master_csv, ...)`.
+2. `load_or_create_splits` → `Subset` for train and val.
+3. Build `TriLevelFinancialModel` and (if `--lora`) wrap encoder via `wrap_with_lora`.
+4. `TriLevelLoss` (loads pos_weight tensors and clamps at 100).
+5. AdamW with no-decay filter on `bias`, `LayerNorm.weight`. Linear warmup over `warmup_ratio` of total steps.
+6. `torch.amp.GradScaler` + autocast (fp16) on CUDA, plain fp32 on CPU.
+7. Per epoch: train pass with `clip_grad_norm_`, then `evaluate` over the val loader.
+8. Save best checkpoint by **combined F1** = mean of (macro micro-F1, industry micro-F1, entity micro-F1). Early stop after `patience` epochs with no improvement.
+9. Append a JSON line per epoch to `log.jsonl` (loss, per-head F1, combined F1, wall time).
+
+Run dir layout (`artifacts/runs/{backbone}_{timestamp}/`):
+```
+config.json   # full TrainConfig as written
+splits.json   # snapshot of indices used (matches data/splits/trilevel_splits.json)
+log.jsonl     # one row per epoch, machine-readable
+best.pt       # state_dict + config + epoch + val metrics
+```
+
+### 10.4 Verified smoke run (CUDA, RoBERTa-base, 1 epoch, 16 train / 8 val)
+```
+[lora_wrap] auto-detected target modules: ('query', 'value')
+[lora_wrap] before: trainable=124,668,702 / total=124,668,702
+[lora_wrap] after:  trainable=317,982 / total=124,963,614 (0.254%)
+[lora_wrap] head trainable params: 23,070
+[train] run_dir=artifacts\runs\roberta-base_20260415_115531
+[train] device=cuda | train=16 val=8
+  ep1 step 8/8  loss=5.1449  lr=0.00e+00
+[ep1] val combined_f1=0.0249 (M=0.000 I=0.054 E=0.021) loss=4.8077 time=0.8s
+  [best] combined_f1=0.0249 -> best.pt
+[train] done. best combined_f1=0.0249  ckpt=...\best.pt
+```
+Full pipeline reaches `best.pt` and writes `log.jsonl`. Combined F1 is meaningless on 16 examples — the test confirms wiring, not learning.
+
+### 10.5 Real training commands
+RoBERTa baseline:
+```
+python -m src.training.train --backbone roberta-base --epochs 3 --batch 8 --lora
+```
+FinBERT:
+```
+python -m src.training.train --backbone yiyanghkust/finbert-tone --epochs 3 --batch 8 --lora
+```
+DeBERTa-v3:
+```
+python -m src.training.train --backbone microsoft/deberta-v3-base --epochs 3 --batch 8 --lora
+```
+
+All three use the **same frozen split** (loaded from `data/splits/trilevel_splits.json`) so per-backbone metrics are directly comparable.
+
+### 10.6 Things to know before running on the full set
+- **Eval is RAM-heavy.** All val logits are concatenated on CPU before metrics. With 922 val rows × 512 tokens × 11 entity classes × float32 ≈ 20 MB — fine. If you bump max_length or val_frac, watch memory.
+- **Mixed precision can NaN early.** If you see `loss=nan` at step 1, re-run with `--no-amp` and report; it usually means the entity logits collapsed because of an empty class somewhere. We have not seen this on RoBERTa-base.
+- **AL warm path** is the third-pass append behaviour in `splits.py`. After AL adds N new labelled rows to the master csv (appended at the end), the next training run will see `n_rows > old_n` and silently extend `train` with `range(old_n, n_rows)` — val and test stay frozen.
+
+---
+
+## 11. Step 7 — Active learning loop
+
+Goal: rescue the 75% of training rows where Gemma did not assign any macro label. The loop trains a model, asks it which empty-macro rows it thinks have a missed label, sends those rows back to Gemma for a second pass, then retrains.
+
+Four files, plus the round driver. All artefacts live under `data/active_learning/round_{N}/`.
+
+### 11.1 Pool definition
+The AL pool is restricted to **rows in the train split with empty macro_list**. Val and test never enter AL — their labels stay frozen so per-round comparisons are honest. Train-pool size on the current corpus: **5,484** rows (74% of train).
+
+### 11.2 `src/active_learning/score.py`
+- Loads the best checkpoint for a backbone, recreates the LoRA wrap from the saved config, loads weights with `strict=False`.
+- Iterates the pool through the model. For each row writes `{row_idx, macro_probs[8], macro_entropy}` to `scores.jsonl`.
+- `macro_entropy` = sum of per-class binary entropies. Used as a scalar fallback ranker (mining uses per-class probs by default).
+
+Verified: full pool of 5,484 rows scored end-to-end on CUDA in seconds.
+
+### 11.3 `src/active_learning/mine.py`
+- Strategy: **stratified per-class top-K with a probability floor**. For each macro class c, take the K pool rows with highest `macro_probs[c]` above `min_prob`. Union, dedup (a row claimed by class A is not double-counted under class B).
+- Drops any row already in `relabelled_ids.json` (no double-asking Gemma in later rounds).
+- Output: `candidates.jsonl` with `{row_idx, top_class, top_prob, all_probs}`.
+
+Why per-class instead of plain entropy: generic uncertainty biases AL toward ambiguous rows the model already half-handles. Per-class rescue directly targets the report's Finding 2 (macro under-firing on Consumption / Inflation / Money-and-Credit).
+
+Verified: with `k=10, min_prob=0.05` the smoke run picked exactly 10 candidates per class for all 8 macro classes (80 total).
+
+### 11.4 `src/active_learning/relabel.py`
+- Re-uses `data/llm_auto_labeller.call_ollama + validate` verbatim — same `SYSTEM_PROMPT`, same `temperature=0.1`, same vocab. Annotator drift across rounds = 0.
+- Maps `filtered_idx -> raw_csv_idx` via `_filtered_to_master_index` so writes land on the correct row of the unfiltered csv.
+- For each candidate: call Gemma with (title, text). If `is_financial=False`, record and skip (no label overwrite). If `macro` is now non-empty, write back; industry/entity are only overwritten if the new pass produced something non-empty (never erase existing labels).
+- Backs up the master csv as `*.bak_round_{N}.csv` before any edit. Idempotent: rerunning the same round will overwrite the same backup but only call Gemma on candidates not yet in `relabelled_ids.json`.
+- Logs every decision to `relabel_log.jsonl` (before/after macro, industry, entity count, rescued bool).
+
+### 11.5 `src/active_learning/loop.py`
+Per-round flow:
+1. **Train** (skipped on round 1 if `--baseline-ckpt` is passed).
+2. **Score** the pool with the freshest ckpt.
+3. **Mine** stratified candidates.
+4. **Relabel** via Gemma; merge in place.
+5. **Recompute pos_weight** by invoking `src/data_prep/class_weights.py` so the next training run sees the new class balance.
+6. Append per-round summary to `data/active_learning/loop_summary.jsonl`.
+
+Stop conditions (OR-combined; any triggers exit):
+- `max_rounds` reached (default 5).
+- `n_rescued < min_rescued_per_round` (default 20). Diminishing return.
+- Val combined-F1 delta `< min_delta` (default 0.005) for `patience_rounds` (default 2) consecutive rounds.
+- Candidate list empty after mining.
+
+### 11.6 Run commands
+Standalone (debug each stage individually):
+```
+python -m src.active_learning.score    --ckpt artifacts/runs/<run>/best.pt --round 1
+python -m src.active_learning.mine     --round 1 --k-per-class 50 --min-prob 0.30
+python -m src.active_learning.relabel  --round 1
+```
+
+Full driver (recommended):
+```
+python -m src.active_learning.loop --backbone roberta-base --max-rounds 5
+```
+
+Resume from existing baseline (skip first train):
+```
+python -m src.active_learning.loop --backbone roberta-base --max-rounds 5 \
+    --skip-first-train --baseline-ckpt artifacts/runs/<run>/best.pt
+```
+
+### 11.7 Per-round outputs
+```
+data/active_learning/
+  relabelled_ids.json           # cumulative set of filtered_idx already re-asked
+  loop_summary.jsonl            # one row per round (history vector inside)
+  round_1/
+    scores.jsonl
+    candidates.jsonl
+    relabel_log.jsonl
+    summary.json
+  round_2/
+    ...
+```
+Plus a backup of the master csv per round at the same level as the original csv: `silver_dataset_master_with_text.bak_round_N.csv`.
+
+### 11.8 Things to know before running
+- **Ollama must be reachable.** `OLLAMA_URL = http://192.168.0.19:11434` is hard-wired in `data/llm_auto_labeller.py`. If you are running off-network, point it at localhost first.
+- **Splits do not change.** AL rescues existing rows (rewrites their macro string). It does not append new rows. So `data/splits/trilevel_splits.json` stays valid across all rounds — same val and test set throughout the experiment.
+- **No diversity filter yet (v1).** Stratified per-class already gives cross-class diversity. If within-class duplicates become a problem, add a kmeans pass over [CLS] embeddings inside `mine.py` and sample 1/cluster.
+- **No human spot-check yet.** Recommended: after each round, manually inspect 10 random rows from `relabel_log.jsonl` where `rescued=True` to catch silent prompt drift.
+
+---
+
+## 12. Step 8 — Evaluation deliverables
+
+Two reporting modules. Both take a checkpoint and a split (`val`/`test`) and emit JSON + (optionally) a markdown table.
+
+### 12.1 `src/eval/span_f1.py`
+Strict span-level entity F1. A predicted span counts only if both the boundary AND the type match the gold span exactly (the convention every NER paper uses).
+
+- Decodes BIO predictions to `(start, end, type)` tuples via `bio_to_spans`.
+- Drops `-100` ignore positions (subword continuations, special tokens) before scoring.
+- Uses `seqeval` (IOB2, strict mode) when installed; falls back to a built-in implementation of the same metric if not.
+- Output: `artifacts/eval/<run_name>_span_f1_<split>.json` with overall and per-type P/R/F1.
+
+Run:
+```
+python -m src.eval.span_f1 --ckpt artifacts/runs/<run>/best.pt --split val
+python -m src.eval.span_f1 --ckpt artifacts/runs/<run>/best.pt --split test
+```
+
+### 12.2 `src/eval/per_class_report.py`
+Per-class precision, recall, F1, and support for the macro and industry heads. Uses sigmoid threshold (default 0.5).
+
+- Output JSON: `artifacts/eval/<run_name>_per_class_<split>.json`.
+- Output markdown: `artifacts/eval/<run_name>_per_class_<split>.md` — paste-ready tables for the report.
+
+Run:
+```
+python -m src.eval.per_class_report --ckpt artifacts/runs/<run>/best.pt --split val
+```
+
+Smoke-verified end-to-end on the 16-row training ckpt: span F1 0.0012 (junk numbers as expected for a 1-epoch toy ckpt; pipeline confirmed).
+
+---
+
+## 13. Step 9 — Inference / serve
+
+### 13.1 `src/serve/predict.py`
+One-shot inference for a single article. Returns a JSON-serialisable dict with macro / industry labels (above threshold) and entity spans (BIO-decoded, mapped back to character offsets in the original text via the tokenizer's offset_mapping).
+
+Run:
+```
+python -m src.serve.predict --ckpt artifacts/runs/<run>/best.pt \
+    --title "Fed hikes rates by 25bps" \
+    --text  "The Federal Reserve raised the benchmark interest rate ..."
+```
+
+Smoke-verified: returns macro/industry probability distributions over the full vocab + thresholded label list + entity surface strings with character spans.
+
+---
+
+## 14. Data scope: where labels and unlabelled raw live
+
+For A2 + A3 the training and AL loops both operate exclusively on `data/silver_dataset_master_with_text.csv`. The "AL pool" is **partially-labelled rows**, not a separate unlabelled corpus: rows in the train split with `is_financial=True` AND `macro_list=[]`. Pool size = 5,484 of 7,374 train rows. Re-asking Gemma is cheap because those rows already have body text on disk.
+
+There are unlabelled raw archives under `data/Datasets/` that have not been ingested. They are an A3 fallback: if AL plateaus below the 40% macro coverage target, run `data/llm_auto_labeller.py` on the unread archives, append to the master csv, and the train split will silently extend (val/test stay frozen). This path is wired but not exercised yet.
+
+---
+
+## 15. What's next
 
 | Step | File | Purpose |
 |---|---|---|
-| 6a | `src/train/metrics.py` | macro-F1, micro-F1, seqeval span-F1 |
-| 6b | `src/train/train_one_backbone.py` | actual training loop, CLI args, per-epoch eval logging |
-| 7 | `src/active_learning/entropy.py` | per-row entropy scoring on unlabelled / low-confidence rows |
-| 8 | `src/active_learning/mine.py` | select top-K highest-entropy rows as the hard sample pool |
-| 9 | `src/active_learning/relabel_loop.py` | re-label hard samples via Gemma with a targeted prompt, merge back |
-| 10 | `src/serve/extract.py` | produce JSON predictions for downstream consumers |
-
-Steps 1–5 are complete and verified. Everything below is A3 scope.
+| 10 | `src/serve/api.py` | thin FastAPI wrapper around `predict.py` for live demos |
+| 11 | report figures | generate per-class and per-round PNGs for §6 |

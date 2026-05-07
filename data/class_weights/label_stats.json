@@ -1,7 +1,6 @@
 {
-  "n_total_rows_raw": 9881,
-  "n_useful_rows": 9218,
-  "n_dropped_all_empty": 150,
+  "n_total_rows_raw": 50063,
+  "n_useful_rows": 18517,
   "macro_order": [
     "Output and Income",
     "Labor Market",
@@ -13,24 +12,24 @@
     "Stock Market"
   ],
   "macro_counts": {
-    "Output and Income": 121,
-    "Labor Market": 95,
-    "Housing": 22,
-    "Consumption, Orders, and Inventories": 4,
-    "Money and Credit": 183,
-    "Interest and Exchange Rates": 253,
-    "Prices": 145,
-    "Stock Market": 1648
+    "Output and Income": 1649,
+    "Labor Market": 577,
+    "Housing": 243,
+    "Consumption, Orders, and Inventories": 535,
+    "Money and Credit": 417,
+    "Interest and Exchange Rates": 2434,
+    "Prices": 3786,
+    "Stock Market": 9401
   },
   "macro_pos_weight": [
-    75.18181610107422,
-    96.03157806396484,
-    418.0,
-    2303.5,
-    49.371585845947266,
-    35.434783935546875,
-    62.57241439819336,
-    4.593446731567383
+    10.229229927062988,
+    31.091854095458984,
+    75.20164489746094,
+    33.61121368408203,
+    43.405277252197266,
+    6.607641696929932,
+    3.890913963317871,
+    0.9696840643882751
   ],
   "industry_order": [
     "Energy",
@@ -46,30 +45,30 @@
     "Real Estate"
   ],
   "industry_counts": {
-    "Energy": 931,
-    "Materials": 742,
-    "Industrials": 646,
-    "Consumer Discretionary": 921,
-    "Consumer Staples": 340,
-    "Health Care": 734,
-    "Financials": 2525,
-    "Information Technology": 1273,
-    "Communication Services": 116,
-    "Utilities": 216,
-    "Real Estate": 296
+    "Energy": 1323,
+    "Materials": 1050,
+    "Industrials": 1166,
+    "Consumer Discretionary": 1359,
+    "Consumer Staples": 818,
+    "Health Care": 1343,
+    "Financials": 4574,
+    "Information Technology": 3232,
+    "Communication Services": 238,
+    "Utilities": 425,
+    "Real Estate": 488
   },
   "industry_pos_weight": [
-    8.9011812210083,
-    11.42318058013916,
-    13.269350051879883,
-    9.008686065673828,
-    26.111764907836914,
-    11.55858325958252,
-    2.65069317817688,
-    6.2411627769470215,
-    78.46551513671875,
-    41.675926208496094,
-    30.141891479492188
+    12.996220588684082,
+    16.635238647460938,
+    14.880788803100586,
+    12.625459671020508,
+    21.636919021606445,
+    12.787788391113281,
+    3.048316478729248,
+    4.729269981384277,
+    76.80252075195312,
+    42.56941223144531,
+    36.944671630859375
   ],
   "unknown_macro_labels": {},
   "unknown_industry_labels": {}

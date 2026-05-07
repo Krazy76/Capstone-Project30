@@ -13,6 +13,11 @@ Industry taxonomy: GICS 11 sectors.
 Entity types: open-set {ORG, PER, LOC, PRODUCT, TICKER}.
 
 Mode: overwrite. Re-labels every row unconditionally.
+
+Current pass: enriched-MACRO_RULES re-label (FRED-MD appendix derived, ~180
+keywords across 8 groups, up from ~75). Caps lifted: NUM_CTX=8192,
+HARD_CHAR_CAP=24K, MAX_CSV_ROWS=None, resume guards removed so every row
+gets re-scored by the richer prompt.
 """
 
 import json
@@ -27,13 +32,17 @@ from tqdm import tqdm
 
 
 # Config
-OLLAMA_URL = "http://192.168.0.19:11434/api/generate"
+OLLAMA_URL = "http://192.168.0.27:11434/api/generate"
 MODEL = "gemma4:latest"
 REQUEST_TIMEOUT = 300  # seconds; long articles + cold model can be slow
 MAX_RETRIES = 3
-HARD_CHAR_CAP = 8_000   # ~2K tokens; covers the vast majority of articles
-NUM_CTX = 4096          # Ollama context window
-MAX_CSV_ROWS = 8000     # cap the (corrupted, 61K row) CSV pass
+# Caps lifted for the enriched-MACRO_RULES re-label pass. Bumping NUM_CTX to
+# 8192 and the char cap to 24K (~6K tokens) lets the model see the full body
+# of essentially every article in the corpus. MAX_CSV_ROWS=None removes the
+# 8K cap on the CSV pass so the full ~61K-row CSV is processed.
+HARD_CHAR_CAP = 24_000  # ~6K tokens; covers >99% of articles end-to-end
+NUM_CTX = 8192          # Ollama context window (raised from 4096)
+MAX_CSV_ROWS = None     # no cap; process entire CSV
 
 BASE = Path(r"E:\Coding\Python\Capstone-Project30\data")
 DB_PATH = BASE / "database 1.db"
@@ -43,49 +52,95 @@ ZIP_DIR = BASE / "Datasets"
 ZIP_OUT = BASE / "silver_dataset_zips_labelled.csv"
 MASTER_OUT = BASE / "silver_dataset_master.csv"
 MASTER_DB = BASE / "silver_dataset_master.db"
+MASTER_WITH_TEXT_OUT = BASE / "silver_dataset_master_with_text.csv"
 
 
 # Controlled vocabularies
+# Macro vocabulary derived from the FRED-MD appendix (8 groups, ~134
+# underlying monthly indicators). Keywords cover the high-level concept,
+# the indicator names that appear in financial news, and the sector- or
+# region-specific breakouts that articles commonly report on.
+# Doubling the keyword density vs the original short list is intentional:
+# the original 25% macro coverage ceiling on the silver corpus traced to
+# under-firing on company-level news that should have mapped to Labor
+# Market (sector payrolls), Prices (oil/PPI), Money and Credit (real-estate
+# / vehicle / consumer loans), and Interest and Exchange Rates (corporate
+# bond yields, bilateral FX).
 MACRO_RULES = {
     "Output and Income": [
-        "GDP report", "gross domestic product", "industrial production",
-        "personal income", "economic growth", "recession", "expansion",
-        "capacity utilization",
+        "GDP", "gross domestic product", "industrial production", "IP index",
+        "personal income", "real personal income", "manufacturing output",
+        "factory output", "capacity utilization", "industrial capacity",
+        "consumer goods production", "durable goods production",
+        "nondurable goods production", "business equipment production",
+        "industrial materials", "manufacturing index", "economic growth",
+        "recession", "expansion", "GDP growth", "real GDP",
     ],
     "Labor Market": [
-        "unemployment rate", "non-farm payrolls", "jobs report",
-        "jobless claims", "wage growth", "job openings", "JOLTS",
-        "labor force participation", "layoffs", "hiring",
+        "unemployment rate", "non-farm payrolls", "nonfarm payrolls",
+        "jobs report", "jobless claims", "initial claims", "continuing claims",
+        "wage growth", "average hourly earnings", "average weekly hours",
+        "overtime hours", "JOLTS", "job openings", "labor force participation",
+        "layoffs", "hiring", "job cuts", "job losses", "workforce reduction",
+        "manufacturing employment", "manufacturing jobs", "construction jobs",
+        "retail employment", "wholesale employment", "government payrolls",
+        "service sector jobs", "mining employment", "help wanted",
+        "civilian labor force", "civilian employment", "unemployment duration",
     ],
     "Housing": [
-        "housing starts", "building permits", "home sales",
-        "mortgage rates", "housing market", "real estate prices",
-        "case-shiller", "new home sales", "existing home sales",
+        "housing starts", "building permits", "home sales", "new home sales",
+        "existing home sales", "mortgage rates", "mortgage applications",
+        "housing market", "real estate prices", "case-shiller", "home prices",
+        "home builder", "homebuilder confidence", "single-family", "multi-family",
+        "regional housing", "housing inventory", "private housing permits",
+        "construction permits",
     ],
     "Consumption, Orders, and Inventories": [
-        "retail sales", "consumer spending", "durable goods orders",
-        "factory orders", "business inventories", "manufacturing orders",
-        "consumer confidence",
+        "retail sales", "consumer spending", "personal consumption", "PCE",
+        "real personal consumption", "durable goods orders", "factory orders",
+        "new orders", "unfilled orders", "business inventories",
+        "inventory to sales", "wholesale sales", "wholesale inventories",
+        "consumer sentiment", "consumer confidence", "Michigan sentiment",
+        "Conference Board confidence", "manufacturing orders",
+        "capital goods orders", "consumer goods orders", "trade sales",
     ],
     "Money and Credit": [
-        "money supply", "M1", "M2", "consumer credit", "bank reserves",
-        "credit conditions", "loan growth", "bank lending",
+        "money supply", "M1", "M2", "monetary base", "consumer credit",
+        "bank reserves", "credit conditions", "loan growth", "bank lending",
+        "commercial loans", "industrial loans", "C&I loans",
+        "real estate loans", "mortgage credit", "auto loans", "vehicle loans",
+        "credit card debt", "consumer debt", "nonrevolving credit",
+        "revolving credit", "bank credit", "securities holdings",
+        "commercial paper outstanding", "money stock",
     ],
     "Interest and Exchange Rates": [
         "interest rate decision", "federal reserve", "FOMC", "rate hike",
-        "rate cut", "jerome powell", "treasury yield", "yield curve",
-        "bond yields", "dollar index", "forex", "currency",
-        "quantitative tightening",
+        "rate cut", "jerome powell", "fed funds rate", "fed funds",
+        "treasury yield", "yield curve", "bond yields", "T-bill",
+        "3-month treasury", "10-year treasury", "30-year treasury",
+        "AAA bond yield", "BAA bond yield", "corporate bond yield",
+        "credit spread", "yield spread", "commercial paper rate",
+        "dollar index", "DXY", "trade weighted dollar", "forex", "currency",
+        "yen", "japanese yen", "euro", "british pound", "pound sterling",
+        "yuan", "renminbi", "swiss franc", "canadian dollar", "exchange rate",
+        "bilateral exchange rate", "quantitative tightening", "quantitative easing",
     ],
     "Prices": [
         "CPI", "consumer price index", "PPI", "producer price index",
-        "inflation rate", "core inflation", "deflation", "stagflation",
-        "cost of living", "price pressures",
+        "inflation rate", "core inflation", "headline inflation", "deflation",
+        "disinflation", "stagflation", "cost of living", "price pressures",
+        "PCE deflator", "personal consumption deflator", "core PCE",
+        "oil prices", "crude oil prices", "WTI", "brent crude", "gasoline prices",
+        "metals prices", "commodity prices", "import prices", "export prices",
+        "wholesale prices", "intermediate materials prices", "crude materials prices",
+        "apparel prices", "medical care prices", "transportation prices",
+        "services inflation", "goods inflation", "food prices", "energy prices",
     ],
     "Stock Market": [
-        "S&P 500", "Dow Jones", "Nasdaq", "stock market rally",
-        "market selloff", "equity markets", "bull market", "bear market",
-        "market volatility", "VIX",
+        "S&P 500", "Dow Jones", "Nasdaq", "stock market rally", "market selloff",
+        "equity markets", "bull market", "bear market", "market volatility", "VIX",
+        "P/E ratio", "price-earnings ratio", "dividend yield", "stock index",
+        "market correction", "all-time high", "record close", "index futures",
     ],
 }
 
@@ -149,33 +204,54 @@ def _format_vocab(rules: dict) -> str:
     return "\n".join(lines)
 
 
+_MACRO_LABELS = list(MACRO_RULES.keys())
+_INDUSTRY_LABELS = list(INDUSTRY_RULES.keys())
+
+# Build keyword hints: "- LabelName (keywords: kw1, kw2, ...)"
+def _format_vocab_with_hints(rules: dict) -> str:
+    lines = []
+    for label, kws in rules.items():
+        lines.append(f"  - {label} (e.g. {', '.join(kws[:6])}{'...' if len(kws)>6 else ''})")
+    return "\n".join(lines)
+
+
 SYSTEM_PROMPT = f"""You are a financial news classifier. Read the article and \
-return STRICT JSON only, no prose. You must apply three labelling tasks at once:
+return STRICT JSON only, no prose.
 
 1. is_financial (boolean): true if the article discusses financial markets, \
-the economy, companies, or investing; false otherwise (sports, lifestyle, etc.).
+the economy, companies, or investing; false otherwise.
 
-2. macro (list of strings): zero or more labels from the FRED-MD 8 taxonomy \
-below. Pick ONLY labels that the article meaningfully discusses. Empty list \
-is correct when no macro indicator applies.
+2. macro (list of strings): RETURN ONLY strings from this exact list:
+{json.dumps(_MACRO_LABELS)}
+Apply a label only when the macro indicator is the article's PRIMARY topic or a \
+MAJOR driver of the story - not a passing mention or distant side effect.
+Label definitions and boundaries:
+  - Stock Market: aggregate index movements ONLY (S&P 500, Dow Jones, Nasdaq, VIX, \
+market-wide sentiment, index futures). Do NOT apply to individual company stock price \
+changes, earnings beats/misses, or single-stock news.
+  - Prices: economy-wide price levels (CPI, PPI, inflation rate, oil/commodity prices, \
+import/export prices). Not individual asset valuations or company pricing.
+  - Output and Income: national/sectoral production and income aggregates (GDP, \
+industrial production, capacity utilization). Not individual company revenue.
+  - All other labels: apply when the article substantively reports the indicator itself \
+or its direct economy-wide impact.
+Empty list when no macro indicator is a primary or major topic.
+Reference keywords (do NOT return these - return the label name above):
+{_format_vocab_with_hints(MACRO_RULES)}
 
-{_format_vocab(MACRO_RULES)}
+3. industry (list of strings): RETURN ONLY strings from this exact list:
+{json.dumps(_INDUSTRY_LABELS)}
+Empty list for pure macro news with no sector angle.
+Reference keywords:
+{_format_vocab_with_hints(INDUSTRY_RULES)}
 
-3. industry (list of strings): zero or more GICS sector labels from the list \
-below. Pick ONLY sectors the article meaningfully discusses. Empty list is \
-correct for pure macro news with no sector angle.
-
-{_format_vocab(INDUSTRY_RULES)}
-
-4. entity (list of objects): named entities mentioned in the article, each as \
+4. entity (list of objects): named entities, each as \
 {{"name": "...", "type": "..."}} where type is one of: ORG, PER, LOC, PRODUCT, \
-TICKER. Deduplicate. Use the canonical English name.
+TICKER. Deduplicate. Use canonical English name.
 
-Return JSON in exactly this shape:
+Return JSON in exactly this shape (no other keys, no prose):
 {{"is_financial": bool, "macro": [str], "industry": [str], \
-"entity": [{{"name": str, "type": str}}]}}
-
-Use ONLY label strings from the vocabularies above. Do not invent new labels."""
+"entity": [{{"name": str, "type": str}}]}}"""
 
 
 def build_user_prompt(title: str, text: str) -> str:
@@ -210,12 +286,28 @@ def call_ollama(title: str, text: str) -> dict | None:
     return None
 
 
+# Keyword → group-name reverse index for fallback recovery.
+# If Gemma returns a keyword ("inflation") instead of the group name ("Prices"),
+# we can still recover the correct label rather than silently dropping it.
+_MACRO_KW_TO_GROUP: dict[str, str] = {
+    kw.lower(): group
+    for group, kws in MACRO_RULES.items()
+    for kw in kws
+}
+_INDUSTRY_KW_TO_GROUP: dict[str, str] = {
+    kw.lower(): group
+    for group, kws in INDUSTRY_RULES.items()
+    for kw in kws
+}
+
+
 # Validation
 def validate(obj: dict | None) -> dict:
     if not isinstance(obj, dict):
         return {"is_financial": None, "macro": [], "industry": [], "entity": []}
 
-    def _coerce_labels(raw, vocab):
+    def _coerce_labels(raw, vocab, kw_index):
+        """Accept group names directly; fall back to keyword reverse-lookup."""
         out = []
         if not isinstance(raw, list):
             return out
@@ -227,12 +319,19 @@ def validate(obj: dict | None) -> dict:
             else:
                 continue
             cand = cand.strip()
-            if cand in vocab and cand not in out:
-                out.append(cand)
+            # Primary: exact group-name match.
+            if cand in vocab:
+                if cand not in out:
+                    out.append(cand)
+                continue
+            # Fallback: Gemma returned a keyword → map to its parent group.
+            group = kw_index.get(cand.lower())
+            if group and group not in out:
+                out.append(group)
         return out
 
-    macro = _coerce_labels(obj.get("macro", []), MACRO_RULES)
-    industry = _coerce_labels(obj.get("industry", []), INDUSTRY_RULES)
+    macro = _coerce_labels(obj.get("macro", []), MACRO_RULES, _MACRO_KW_TO_GROUP)
+    industry = _coerce_labels(obj.get("industry", []), INDUSTRY_RULES, _INDUSTRY_KW_TO_GROUP)
 
     entity = []
     seen = set()
@@ -300,26 +399,20 @@ def label_csv():
         df = df.head(MAX_CSV_ROWS)
     print(f"  {len(df)} rows to label.")
 
-    # Resume support: if output file exists, skip already-done article_ids.
-    done_ids = set()
+    # Fresh pass: delete any prior labelled output so existing rows are
+    # re-labelled with the enriched MACRO_RULES rather than skipped.
     if CSV_OUT.exists():
-        try:
-            done_df = pd.read_csv(CSV_OUT)
-            done_ids = set(done_df["article_id"].astype(str).tolist())
-            print(f"  Resume: {len(done_ids)} rows already labelled in {CSV_OUT.name}.")
-        except Exception:
-            pass
+        print(f"  Overwrite: removing prior {CSV_OUT.name}")
+        CSV_OUT.unlink()
 
     out_cols = [
         "article_id", "title", "url", "published_at", "source_site",
         "is_financial_llm", "macro_llm", "industry_llm", "entity_llm",
     ]
-    write_header = not CSV_OUT.exists()
+    write_header = True
 
     for _, row in tqdm(df.iterrows(), total=len(df), desc="CSV"):
         aid = str(row.get("article_id", ""))
-        if aid in done_ids:
-            continue
         title = row.get("title", "")
         text = row.get("text", "")
         if not isinstance(text, str) or not text.strip():
@@ -368,21 +461,18 @@ def label_zips():
     zip_files = sorted(ZIP_DIR.glob("*.zip"))
     print(f"  Found {len(zip_files)} zip files.")
 
-    done_ids = set()
+    # Fresh pass: delete prior labelled output so enriched MACRO_RULES apply.
     if ZIP_OUT.exists():
-        try:
-            done_df = pd.read_csv(ZIP_OUT, usecols=["article_id"])
-            done_ids = set(done_df["article_id"].astype(str).tolist())
-            print(f"  Resume: {len(done_ids)} articles already labelled.")
-        except Exception:
-            pass
+        print(f"  Overwrite: removing prior {ZIP_OUT.name}")
+        ZIP_OUT.unlink()
+    done_ids: set = set()  # only used for in-run dedupe across zips
 
     out_cols = [
-        "article_id", "title", "url", "published_at",
+        "article_id", "title", "text", "url", "published_at",
         "source_site", "source_country",
         "is_financial_llm", "macro_llm", "industry_llm", "entity_llm",
     ]
-    write_header = not ZIP_OUT.exists()
+    write_header = True
 
     for zip_path in tqdm(zip_files, desc="ZIPs"):
         try:
@@ -406,6 +496,7 @@ def label_zips():
                     out_row = {
                         "article_id": aid,
                         "title": art.get("title", ""),
+                        "text": art.get("text", ""),   # full body — included for master
                         "url": art.get("url", ""),
                         "published_at": art.get("published_at", ""),
                         "source_site": art.get("source_site", ""),
@@ -429,7 +520,8 @@ def label_zips():
 # Entry
 def health_check():
     try:
-        r = requests.get("http://192.168.0.19:11434/api/tags", timeout=10)
+        base = OLLAMA_URL.rsplit("/", 2)[0]  # strip /api/generate
+        r = requests.get(f"{base}/api/tags", timeout=10)
         r.raise_for_status()
         tags = [m["name"] for m in r.json().get("models", [])]
         print(f"Ollama reachable. Models available: {tags}")
@@ -441,29 +533,166 @@ def health_check():
 
 
 def main():
-    health_check()
-    label_database()
-    label_csv()
-    label_zips()
-    merge_outputs()
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument(
+        "--merge-only", action="store_true",
+        help="Skip labelling; merge whatever labelled files exist and produce "
+             "silver_dataset_master_with_text.csv.",
+    )
+    p.add_argument(
+        "--relabel-master", action="store_true",
+        help="Re-label rows in silver_dataset_master_with_text.csv with the "
+             "current prompt. Marks each processed row with label_version=v2.",
+    )
+    p.add_argument(
+        "--max-rows", type=int, default=None,
+        help="Stop after processing this many rows (for staged runs, e.g. 20000).",
+    )
+    args = p.parse_args()
+
+    if args.merge_only:
+        merge_outputs_with_text()
+    elif args.relabel_master:
+        health_check()
+        relabel_master(max_rows=args.max_rows)
+    else:
+        health_check()
+        label_zips()
+        merge_outputs_with_text()
     print("\nAll done.")
 
 
-def merge_outputs():
-    """Merge DB + CSV + ZIP labelled outputs into one master CSV.
+LABEL_VERSION = "v2"  # bump this when the prompt changes meaningfully
 
-    Schema: article_id, source, title, url, published_at, source_site,
-            is_financial, macro, industry, entity
-    Dedupe key: article_id (CSV/ZIP win over DB on collision; ZIP wins over CSV).
+
+def relabel_master(
+    path: Path = MASTER_WITH_TEXT_OUT,
+    checkpoint: Path | None = None,
+    max_rows: int | None = None,
+):
+    """Re-label silver_dataset_master_with_text.csv with the current prompt.
+
+    Columns updated per row:
+      is_financial, macro, industry, entity  -- new Gemma labels
+      label_version                          -- set to LABEL_VERSION ("v2")
+
+    Rows NOT yet processed keep label_version=NaN (or prior value).
+    Training pipeline should filter: df[df["label_version"] == "v2"].
+
+    Resume: a .ckpt sidecar tracks the last completed row index.
+    max_rows: stop after this many rows have been processed (for staged runs).
     """
-    print("\n=== Merging outputs into master CSV ===")
+    import time as _time
+    import os as _os
+
+    def _atomic_to_csv(frame, target: Path, retries: int = 5):
+        """Write CSV atomically: write to .tmp, fsync, then os.replace.
+
+        Avoids partial-write corruption AND retries transient Windows
+        IO errors (file briefly locked by AV / OneDrive / explorer preview).
+        """
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        last_err = None
+        for attempt in range(1, retries + 1):
+            try:
+                frame.to_csv(tmp, index=False)
+                _os.replace(tmp, target)
+                return
+            except OSError as e:
+                last_err = e
+                _time.sleep(2 ** attempt)  # 2,4,8,16,32s
+        raise RuntimeError(f"atomic write failed after {retries} retries: {last_err}")
+
+    if checkpoint is None:
+        checkpoint = path.with_suffix(".relabel_ckpt")
+
+    print(f"\n=== Re-labelling master: {path.name} ===")
+    df = pd.read_csv(path, low_memory=False)
+    n = len(df)
+
+    # Ensure label_version column exists.
+    if "label_version" not in df.columns:
+        df["label_version"] = None
+
+    # Resume: find last completed index.
+    start = 0
+    if checkpoint.exists():
+        try:
+            start = int(checkpoint.read_text().strip()) + 1
+            print(f"  Resuming from row {start}.")
+        except Exception:
+            pass
+
+    stop = min(n, start + max_rows) if max_rows else n
+    already_done = int(df["label_version"].eq(LABEL_VERSION).sum())
+    print(f"  {n} rows total | {already_done} already v2 | "
+          f"processing rows {start}-{stop-1} ({stop - start} rows)")
+
+    t0 = _time.time()
+    macro_hits = 0
+    pbar = tqdm(range(start, stop), total=stop - start, desc="relabel",
+                unit="row", dynamic_ncols=True)
+    for i in pbar:
+        row = df.iloc[i]
+        title = str(row.get("title") or "")
+        text  = str(row.get("text")  or "")
+        if not text.strip() and not title.strip():
+            df.at[i, "label_version"] = LABEL_VERSION
+            continue
+
+        result = validate(call_ollama(title, text))
+        df.at[i, "is_financial"]  = result["is_financial"]
+        df.at[i, "macro"]         = json.dumps(result["macro"])
+        df.at[i, "industry"]      = json.dumps(result["industry"])
+        df.at[i, "entity"]        = json.dumps(result["entity"])
+        df.at[i, "label_version"] = LABEL_VERSION
+
+        if result["macro"]:
+            macro_hits += 1
+        pbar.set_postfix(macro=macro_hits, v2=int(df["label_version"].eq(LABEL_VERSION).sum()), row=i)
+
+        # Flush every 500 rows (175MB CSV; smaller intervals waste IO).
+        if (i + 1) % 500 == 0:
+            _atomic_to_csv(df, path)
+            checkpoint.write_text(str(i))
+
+    # Final write.
+    _atomic_to_csv(df, path)
+    checkpoint.unlink(missing_ok=True)
+    elapsed = _time.time() - t0
+    v2_total = int(df["label_version"].eq(LABEL_VERSION).sum())
+    print(f"  Done. processed={stop - start}  v2_total={v2_total}  "
+          f"macro_hits={macro_hits}  time={elapsed:.0f}s")
+
+
+def merge_outputs_with_text():
+    """Merge DB + CSV + ZIP labelled outputs into one master CSV **with text**.
+
+    Text sourcing:
+      - DB   : SELECT text FROM articles in SQLite
+      - CSV  : join CSV_OUT (labels) with CSV_IN (source, has text) on article_id
+      - ZIP  : ZIP_OUT already contains text column (written by label_zips)
+
+    Output schema:
+      article_id, source, title, text, url, published_at, source_site,
+      is_financial, macro, industry, entity
+
+    Dedupe key: article_id. Priority: ZIP > CSV > DB on collision.
+    Written to: silver_dataset_master_with_text.csv
+    """
+    print("\n=== Merging outputs into master-with-text CSV ===")
+    FINAL_COLS = [
+        "article_id", "source", "title", "text", "url", "published_at",
+        "source_site", "is_financial", "macro", "industry", "entity",
+    ]
     frames = []
 
-    # 1. DB rows
+    # 1. DB rows (87 rows, already labelled, text lives in SQLite)
     if DB_PATH.exists():
         conn = sqlite3.connect(DB_PATH)
         db_df = pd.read_sql_query(
-            "SELECT id, title, source, publishedAt, is_financial, "
+            "SELECT id, title, text, source, publishedAt, is_financial, "
             "macro, industry, entity FROM articles", conn,
         )
         conn.close()
@@ -475,38 +704,41 @@ def merge_outputs():
         db_df["article_id"] = "db_" + db_df["article_id"].astype(str)
         db_df["url"] = ""
         db_df["source"] = "db"
-        # Normalize is_financial to bool/None
         db_df["is_financial"] = db_df["is_financial"].apply(
             lambda v: bool(v) if pd.notna(v) else None
         )
-        frames.append(db_df[[
-            "article_id", "source", "title", "url", "published_at",
-            "source_site", "is_financial", "macro", "industry", "entity",
-        ]])
+        db_df["text"] = db_df["text"].fillna("")
+        frames.append(db_df[FINAL_COLS])
         print(f"  DB rows: {len(db_df)}")
 
-    # 2. CSV pass
+    # 2. CSV-labelled rows (~29K in CSV_OUT) — join with CSV_IN to get text.
     if CSV_OUT.exists():
-        csv_df = pd.read_csv(CSV_OUT)
-        csv_df = csv_df.rename(columns={
+        print(f"  Loading labels from {CSV_OUT.name} ...")
+        csv_lbl = pd.read_csv(CSV_OUT, low_memory=False)
+        csv_lbl = csv_lbl.rename(columns={
             "is_financial_llm": "is_financial",
             "macro_llm": "macro",
             "industry_llm": "industry",
             "entity_llm": "entity",
         })
-        csv_df["source"] = "csv"
+        csv_lbl["source"] = "csv"
         for col in ("url", "source_site"):
-            if col not in csv_df.columns:
-                csv_df[col] = ""
-        frames.append(csv_df[[
-            "article_id", "source", "title", "url", "published_at",
-            "source_site", "is_financial", "macro", "industry", "entity",
-        ]])
-        print(f"  CSV rows: {len(csv_df)}")
+            if col not in csv_lbl.columns:
+                csv_lbl[col] = ""
 
-    # 3. ZIP pass
+        # Join text from original source CSV.
+        print(f"  Loading text from {CSV_IN.name} (may take a moment) ...")
+        csv_src = pd.read_csv(CSV_IN, low_memory=False, usecols=["article_id", "text"])
+        csv_src["article_id"] = csv_src["article_id"].astype(str)
+        csv_lbl["article_id"] = csv_lbl["article_id"].astype(str)
+        csv_lbl = csv_lbl.merge(csv_src, on="article_id", how="left")
+        csv_lbl["text"] = csv_lbl["text"].fillna("")
+        frames.append(csv_lbl[FINAL_COLS])
+        print(f"  CSV rows: {len(csv_lbl)}  (text attached: {(csv_lbl['text'] != '').sum()})")
+
+    # 3. ZIP rows — ZIP_OUT now contains text column written by label_zips().
     if ZIP_OUT.exists():
-        zip_df = pd.read_csv(ZIP_OUT)
+        zip_df = pd.read_csv(ZIP_OUT, low_memory=False)
         zip_df = zip_df.rename(columns={
             "is_financial_llm": "is_financial",
             "macro_llm": "macro",
@@ -514,33 +746,39 @@ def merge_outputs():
             "entity_llm": "entity",
         })
         zip_df["source"] = "zip"
-        frames.append(zip_df[[
-            "article_id", "source", "title", "url", "published_at",
-            "source_site", "is_financial", "macro", "industry", "entity",
-        ]])
-        print(f"  ZIP rows: {len(zip_df)}")
+        zip_df["text"] = zip_df.get("text", pd.Series(dtype=str)).fillna("")
+        for col in ("url", "source_site", "source_country"):
+            if col not in zip_df.columns:
+                zip_df[col] = ""
+        frames.append(zip_df[FINAL_COLS])
+        print(f"  ZIP rows: {len(zip_df)}  (text attached: {(zip_df['text'] != '').sum()})")
 
     if not frames:
         print("  [skip] Nothing to merge.")
         return
 
-    # Concatenate; later sources overwrite earlier on article_id collision.
-    # Order: db, csv, zip → ZIP wins, then CSV, then DB.
+    # Concatenate — ZIP wins over CSV wins over DB on article_id collision.
     master = pd.concat(frames, ignore_index=True)
     before = len(master)
     master = master.drop_duplicates(subset="article_id", keep="last").reset_index(drop=True)
-    print(f"  Merged: {before} rows → {len(master)} after dedupe.")
+    print(f"  Merged: {before} rows -> {len(master)} after dedupe.")
 
-    master.to_csv(MASTER_OUT, index=False)
-    print(f"  Master CSV written: {MASTER_OUT}")
+    # Drop rows with empty text — these can't be used for training.
+    has_text = master["text"].str.strip().str.len() > 0
+    master = master[has_text].reset_index(drop=True)
+    print(f"  After dropping empty-text rows: {len(master)}")
 
-    # Also write to SQLite (table: articles, replaced on each run).
-    conn = sqlite3.connect(MASTER_DB)
-    master.to_sql("articles", conn, if_exists="replace", index=False)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_article_id ON articles(article_id)")
-    conn.commit()
-    conn.close()
-    print(f"  Master DB written:  {MASTER_DB}")
+    master.to_csv(MASTER_WITH_TEXT_OUT, index=False)
+    print(f"  Master-with-text CSV written: {MASTER_WITH_TEXT_OUT}")
+
+    # Summary stats.
+    fin = master["is_financial"].apply(lambda v: v is True or v == 1 or str(v).lower() == "true")
+    print(f"  is_financial=True: {fin.sum()} / {len(master)}")
+
+
+def merge_outputs():
+    """Legacy merge without text. Kept for reference — not called by main()."""
+    pass
 
 
 if __name__ == "__main__":
