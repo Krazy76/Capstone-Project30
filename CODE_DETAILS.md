@@ -427,6 +427,8 @@ Losses are similar to the bare test (not identical, because the batch is differe
 | `src/model/lora_wrap.py` | `wrap_with_lora` | imported |
 | `src/tests/smoke_test.py` | Step 4 verification | `python -m src.tests.smoke_test` |
 | `src/tests/smoke_test_lora.py` | Step 5 verification | `python -m src.tests.smoke_test_lora` |
+| `src/data_pipeline/collector.py` | Fetch + deduplicate + append new articles from NewsAPI | `python -m src.data_pipeline.collector` |
+| `src/data_pipeline/test_newsapi.py` | Sanity check API key + domain filters | `python src/data_pipeline/test_newsapi.py` |
 | `src/training/metrics.py` | Per-head F1 helpers | imported |
 | `src/training/splits.py` | Frozen train/val/test split | imported |
 | `src/training/train.py` | Step 6 training loop | `python -m src.training.train ...` |
@@ -668,9 +670,56 @@ There are unlabelled raw archives under `data/Datasets/` that have not been inge
 
 ---
 
-## 15. What's next
+## 15. `src/data_pipeline/collector.py` — continuous news ingestion
 
-| Step | File | Purpose |
-|---|---|---|
-| 10 | `src/serve/api.py` | thin FastAPI wrapper around `predict.py` for live demos |
-| 11 | report figures | generate per-class and per-round PNGs for §6 |
+### What it does
+Fetches recent financial articles from NewsAPI and appends new rows to the master CSV, skipping any URL already present. Designed to be called at the start of each training cycle by the scheduling pipeline (Teammate 2).
+
+### Data sources
+Queries the NewsAPI `/v2/everything` endpoint filtered to trusted financial domains only:
+```
+reuters.com, bloomberg.com, wsj.com, ft.com, cnbc.com, marketwatch.com, forbes.com, economist.com
+```
+Search query: `"stock market OR interest rates OR inflation OR GDP OR earnings"`. Domain filtering is critical — without it NewsAPI returns off-topic articles despite keyword matches.
+
+### Deduplication
+On each run the collector loads all existing URLs from the master CSV into a Python `set`. Any fetched article whose URL is already in the set is silently skipped. This makes every run safe to call repeatedly without bloating the CSV.
+
+### Output row format
+New rows are appended with these columns populated:
+
+| Column | Value |
+|--------|-------|
+| `article_id` | Fresh `uuid4` |
+| `source` | `"newsapi"` |
+| `title`, `text`, `url`, `published_at`, `source_site` | From NewsAPI response |
+| `is_financial`, `macro`, `industry`, `entity`, `label_version` | `None` — filled by LLM labelling worker (Teammate 3) |
+
+### Run commands
+```bash
+# Default: 1 page, 100 articles max
+python -m src.data_pipeline.collector
+
+# Fetch more
+python -m src.data_pipeline.collector --pages 3 --page-size 100
+```
+
+### Scheduling
+The collector is not self-scheduling — it is a standalone command. Teammate 2's training pipeline calls it as the first step of each retraining cycle (before recomputing class weights and running the training loop).
+
+### Requirements
+- `NEWSAPI_KEY` set in `.env` (free tier at newsapi.org, 100 results/request max)
+- `python-dotenv`, `requests`, `pandas` installed
+
+### Dataset state after v2 relabelling + collector
+The original 3-source corpus (DB + CSV + zips) had 9,881 rows. After the teammate's v2 relabelling fix (corrected Gemma prompt + `label_version="v2"` tagging) the shared master CSV has **50,063 rows**. The collector appends on top of this baseline.
+
+---
+
+## 16. What's next (deployment)
+
+| Owner | Task |
+|---|---|
+| Teammate 2 | Scheduler — call collector → retrain → promote checkpoint on a daily/weekly cycle |
+| Teammate 3 | LLM labelling worker — watch CSV for `label_version=None` rows, send to Gemma, write labels back |
+| Teammate 3 | FastAPI backend — fill out `src/serve/api.py`, Dockerise with Uvicorn + Nginx |
